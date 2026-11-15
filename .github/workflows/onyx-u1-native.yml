@@ -101,3 +101,5 @@ jobs:
           update/update-proof/Results.json
           update/guard-proof-U1/Results.json
           update/periodic-proof/Results.json
+    env:
+      PYTHONUNBUFFERED: '1'
