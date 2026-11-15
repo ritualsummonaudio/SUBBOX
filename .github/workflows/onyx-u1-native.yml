@@ -1,0 +1,84 @@
+name: ONYX U1 native Windows verification
+'on':
+  push:
+    branches:
+    - update/onyx-u1-permanent-bands
+    paths:
+    - .github/workflows/onyx-u1-native.yml
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Confirm the previously tested DSP source is unchanged
+      shell: python
+      run: |-
+        import subprocess
+        paths=['baseline','update/BandRanges.h','update/hooks.cpp','update/hooks.S','update/guard-stubs.S','update/targets.cpp','update/exports.def','update/build_patch.py']
+        subprocess.run(['git','diff','--exit-code','b45ad3b0302d0a78cfcd3ec7605482d421bce630','HEAD','--',*paths],check=True)
+        print('DSP source matches the existing 489-case tested image; only verification/build files may differ.')
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - uses: actions/download-artifact@v4
+      with:
+        name: onyx-u1-tested-image
+        path: update
+        run-id: 43705778177
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Retain Linux evidence for this exact image
+      shell: python
+      run: |
+        from pathlib import Path
+        import shutil
+        for path in Path('update').rglob('*.json'):
+            target=Path('qa/linux')/path.relative_to('update')
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(path,target)
+    - name: Configure the native Windows toolchain
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if (!$install) { throw 'Visual C++ toolchain not found' }
+        $devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+        $command = '"' + $devcmd + '" -arch=x64 -host_arch=x64 >nul && set'
+        cmd /c $command | ForEach-Object {
+          if ($_ -match '^(INCLUDE|LIB|LIBPATH|Path|PATH|VCToolsInstallDir|WindowsSdkDir|UniversalCRTSdkDir)=(.*)$') { Add-Content -Path $env:GITHUB_ENV -Value $_ }
+        }
+        if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\ProgramData\chocolatey\bin'
+        }
+    - name: Install measurement dependencies and native probes
+      run: |
+        python -m pip install -r requirements.txt
+        python tools/build.py --probes-only
+    - name: Verify the same image through the native Windows DLL loader
+      run: python tools/verify.py
+    - name: Package tested development image, complete source and evidence
+      run: python tools/package.py
+    - uses: actions/upload-artifact@v4
+      with:
+        name: SUB-BOX-ONYX-U1-Owner-Development
+        path: handoff/SUB-BOX-ONYX-U1-Owner-Development.zip
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: onyx-u1-windows-evidence
+        path: |
+          update/Patch-Identity.json
+          update/Scope-Proof.json
+          update/Verification-Summary.json
+          update/band-proof/Results.json
+          update/update-proof/Results.json
+          update/guard-proof-U1/Results.json
+          update/periodic-proof/Results.json
