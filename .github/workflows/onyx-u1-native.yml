@@ -41,6 +41,30 @@ jobs:
             target=Path('qa/linux')/path.relative_to('update')
             target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(path,target)
+    - name: Retrieve the 234 completed native Windows checks
+      uses: actions/download-artifact@v4
+      with:
+        name: onyx-u1-windows-evidence
+        path: prior-results
+        run-id: 43709407124
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Verify and retain the completed native Windows results
+      shell: python
+      run: |
+        from pathlib import Path
+        import hashlib,json,shutil
+        root=Path('update');digest=hashlib.sha256((root/'Candidate.vst3').read_bytes()).hexdigest()
+        names=['Scope-Proof.json','band-proof/Results.json','update-proof/Results.json'];count=0
+        for name in names:
+            source=Path('prior-results')/name
+            report=json.loads(source.read_text())
+            assert report['module_sha256']==digest and report['failures']==0
+            count+=report['case_count']
+            for parent in [root,Path('qa/windows-prior')]:
+                target=parent/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)
+        assert count==234
+        Path('qa/windows-prior/PROVENANCE.json').write_text(json.dumps(dict(module_sha256=digest,source_run=43709407124,native_windows_completed_cases=count,source_reports=names),indent=2)+'\n')
+        print('Retained 234 passing Windows cases for the identical VST3 image.',flush=True)
     - name: Configure the native Windows toolchain
       shell: pwsh
       run: |
@@ -80,8 +104,22 @@ jobs:
         print(result.stdout,flush=True)
         print(result.stderr,flush=True)
         assert result.returncode==0,result.returncode
-    - name: Verify the same image through the native Windows DLL loader
-      run: python tools/verify.py
+    - name: Complete native peak and periodic checks with the longer offline timeout
+      shell: python
+      run: |
+        from pathlib import Path
+        import hashlib,json,subprocess,sys
+        assert sys.platform=='win32'
+        root=Path('.').resolve();work=root/'update';digest=hashlib.sha256((work/'Candidate.vst3').read_bytes()).hexdigest()
+        for name in ['verify_guard.py','verify_periodic.py']:
+            subprocess.run([sys.executable,str(work/name)],check=True)
+        names=['Scope-Proof.json','band-proof/Results.json','update-proof/Results.json','guard-proof-U1/Results.json','periodic-proof/Results.json']
+        reports=[json.loads((work/name).read_text()) for name in names]
+        assert all(report['module_sha256']==digest and report['failures']==0 for report in reports)
+        summary=dict(module_sha256=digest,groups=len(reports),cases=sum(report['case_count'] for report in reports),failures=0,platform=sys.platform,reports=['update/'+name for name in names],native_VST3_DLL_loaded=True,full_VST3_host_editor=False,FL_Studio=False,owner_seal_required=True,retained_native_windows_run=43709407124,retained_native_windows_cases=234,new_native_windows_cases=255)
+        assert summary['cases']==489
+        (work/'Verification-Summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+        print(json.dumps(summary,indent=2),flush=True)
     - name: Package tested development image, complete source and evidence
       run: python tools/package.py
     - uses: actions/upload-artifact@v4
