@@ -26,7 +26,7 @@ def one(job):
     p = out / (name + '.f64')
     r = subprocess.run([str(exe), str(module), str(mode), str(p), 'file',
                         '48000', str(seed), str(period)], capture_output=True,
-                       text=True, timeout=30)
+                       text=True, timeout=120 if os.name=='nt' else 30)
     assert r.returncode == 0, (name, r.stdout, r.stderr)
     x = np.fromfile(p, dtype='<f8').reshape(-1, 2)
     assert np.isfinite(x).all()
@@ -35,7 +35,7 @@ def one(job):
     r = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-f', 'f64le',
                         '-ar', '48000', '-ac', '2', '-i', str(p), '-af',
                         'ebur128=peak=true:metadata=1,ametadata=mode=print:file=-',
-                        '-f', 'null', '-'], capture_output=True, text=True, timeout=30)
+                        '-f', 'null', '-'], capture_output=True, text=True, timeout=120 if os.name=='nt' else 30)
     assert r.returncode == 0, r.stderr
     values = re.findall(r'lavfi.r128.true_peak(?:s_ch\d+)?=([0-9.eE+-]+)', r.stdout)
     assert values, name
@@ -44,7 +44,7 @@ def one(job):
                 ffmpeg_dbtp=fft, passes=max(sample, tp, fft) <= -.10)
 
 rows = []
-with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+with concurrent.futures.ThreadPoolExecutor(max_workers=2 if os.name=='nt' else 3) as pool:
     for row in pool.map(one, jobs):
         rows.append(row)
         print(json.dumps(row), flush=True)

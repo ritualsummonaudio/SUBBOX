@@ -15,7 +15,7 @@ jobs += [(48000,2,seed) for seed in range(64)] + [(48000,10,seed) for seed in ra
 jobs += [(rate,m,340) for rate in [44100,48000,88200,96000,192000] for m in [16,17]]
 jobs += [(rate,m,340) for rate in [44100,48000,88200,96000,192000] for m in [20,21,22,23,24]]
 def one(args):
- rate,mode,seed=args;name=f'{rate}-{mode:02}-{seed:03}';path=out/(name+'.f64');p=subprocess.run([str(exe),str(plugin),str(mode),str(path),'file',str(rate),str(seed)],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+ rate,mode,seed=args;name=f'{rate}-{mode:02}-{seed:03}';path=out/(name+'.f64');p=subprocess.run([str(exe),str(plugin),str(mode),str(path),'file',str(rate),str(seed)],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120 if os.name=='nt' else 30)
  assert p.returncode==0,(name,p.stdout)
  raw=path.read_bytes();x=np.frombuffer(raw,dtype='<f8').reshape(-1,2);assert np.isfinite(x).all();peak=float(20*np.log10(np.abs(x).max()));row={'case':name,'rate':rate,'mode':mode,'seed':seed,'sample_dbfs':peak,'sha256':hashlib.sha256(raw).hexdigest()}
  if mode in [16,17]:row['exact_384_delay_and_metadata']=True;return row
@@ -26,13 +26,13 @@ def one(args):
  # f32 host quantization is also measured; the plugin's final guard precedes the host sample conversion.
  if rate==48000:
   y=x.astype(np.float32).astype(np.float64);k=kernels[-1];tp=float(20*np.log10(np.abs(resample_poly(y,k[1],1,axis=0,window=k[2])).max()));readers.append({'reader':'f32-output-32x256','dbtp':tp});assert np.abs(y).max()<=np.float32(.9885530471801758)
- p=subprocess.run(['ffmpeg','-hide_banner','-nostats','-f','f64le','-ar',str(rate),'-ac','2','-i',str(path),'-af','ebur128=peak=true:metadata=1,ametadata=mode=print:file=-','-f','null','-'],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+ p=subprocess.run(['ffmpeg','-hide_banner','-nostats','-f','f64le','-ar',str(rate),'-ac','2','-i',str(path),'-af','ebur128=peak=true:metadata=1,ametadata=mode=print:file=-','-f','null','-'],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120 if os.name=='nt' else 30)
  assert p.returncode==0,p.stdout[-500:];values=re.findall(r'lavfi.r128.true_peak(?:s_ch\d+)?=([0-9.eE+-]+)',p.stdout);assert values,name
  tp=20*math.log10(max(map(float,values)));readers.append({'reader':'FFmpeg-ebur128','dbtp':tp})
  row['readers']=readers;row['worst_dbtp']=max(r['dbtp'] for r in readers);row['passes_ceiling']=row['worst_dbtp']<=-.10;return row
 
 rows=[];begin=time.time()
-with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+with concurrent.futures.ThreadPoolExecutor(max_workers=2 if os.name=='nt' else 4) as pool:
  for row in pool.map(one,jobs):
   rows.append(row)
   if len(rows)%16==0:print('Guard cases',len(rows),'of',len(jobs),round(time.time()-begin,1),flush=True)
