@@ -61,6 +61,25 @@ jobs:
       run: |
         python -m pip install -r requirements.txt
         python tools/build.py --probes-only
+    - name: Native loader and first signal case preflight
+      shell: python
+      run: |
+        from pathlib import Path
+        import os,subprocess
+        root=Path('update').resolve()
+        env=dict(os.environ,SBO_EXPECT_DELAY='384',SBO_ENGINE_FINAL_GUARD='1',SBO_TEST_POST_METER='1',SBO_DISCARD_UNAVAILABLE='1')
+        cmd=[str(root/'engine-probe.exe'),str(root/'Candidate.vst3'),'40','0','0','0','0','.00001','.8',os.devnull,'48000']
+        print('Starting native Windows DLL and 40 Hz signal preflight',flush=True)
+        try:
+            result=subprocess.run(cmd,env=env,capture_output=True,text=True,timeout=20)
+        except subprocess.TimeoutExpired as error:
+            print('Native preflight timed out',flush=True)
+            print(error.stdout,flush=True)
+            print(error.stderr,flush=True)
+            raise
+        print(result.stdout,flush=True)
+        print(result.stderr,flush=True)
+        assert result.returncode==0,result.returncode
     - name: Verify the same image through the native Windows DLL loader
       run: python tools/verify.py
     - name: Package tested development image, complete source and evidence
