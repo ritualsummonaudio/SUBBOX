@@ -1,5 +1,5 @@
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor,as_completed
 import hashlib,itertools,json,os,subprocess
 import numpy as np
 from scipy.signal import butter,sosfreqz
@@ -26,7 +26,15 @@ def one(job):
     return dict(test='actual control/SOLO tap matches permanent 20/60/150 Hz LR4 crossover',rate=rate,hz=hz,solo=solo,measured_db=r['tone_gain_db'],expected_db=float(expected_db),error_db=float(error),passes=True)
 rows=[]
 with ThreadPoolExecutor(max_workers=3) as pool:
-    for row in pool.map(one,jobs):rows.append(row)
+    futures=[pool.submit(one,job) for job in jobs]
+    try:
+        for i,future in enumerate(as_completed(futures),1):
+            rows.append(future.result())
+            if i%10==0:print('Permanent band cases',i,'of',len(jobs),flush=True)
+    except BaseException:
+        for future in futures:future.cancel()
+        raise
+rows.sort(key=lambda row:(row['rate'],row['hz'],row['solo']))
 print('Permanent band response cases passed',len(rows),flush=True)
 for solo,hz in [(1,40),(2,90)]:
     unity=response(48000,hz,solo)['tone_gain_db']
