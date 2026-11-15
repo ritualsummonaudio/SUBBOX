@@ -1,0 +1,123 @@
+name: ONYX U1 build and native verification
+
+on:
+  push:
+    branches: [update/onyx-u1-permanent-bands]
+    paths: [SUBBOX-ONYX-U1-Source.zip, .github/workflows/onyx-u1.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Recover the uploaded source tree
+        id: source
+        shell: bash
+        run: |
+          python -m zipfile -e SUBBOX-ONYX-U1-Source.zip .
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .gitignore README.md requirements.txt baseline reference tools update
+          if ! git diff --cached --quiet; then
+            git commit -m 'Recover complete ONYX U1 source from verified owner archive'
+            git push origin 'HEAD:update/onyx-u1-permanent-bands'
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Install build and measurement dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y binutils-mingw-w64-x86-64 ffmpeg g++
+          python -m pip install -r requirements.txt
+      - name: Build exact Windows image and isolated probes
+        run: python tools/build.py
+      - name: Verify image scope, bands, SOLO, meters, memory and peak guard
+        run: python tools/verify.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onyx-u1-tested-image
+          path: |
+            update/Candidate.vst3
+            update/Patch-Identity.json
+            update/Scope-Proof.json
+            update/Verification-Summary.json
+            update/band-proof/Results.json
+            update/update-proof/Results.json
+            update/guard-proof-U1/Results.json
+            update/periodic-proof/Results.json
+          if-no-files-found: error
+
+  windows:
+    needs: build
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: onyx-u1-tested-image
+          path: update
+      - name: Retain Linux evidence for this exact image
+        shell: python
+        run: |
+          from pathlib import Path
+          import shutil
+          for path in Path('update').rglob('*.json'):
+              target=Path('qa/linux')/path.relative_to('update')
+              target.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copy2(path,target)
+      - name: Configure the native Windows toolchain
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$install) { throw 'Visual C++ toolchain not found' }
+          $devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+          $command = '"' + $devcmd + '" -arch=x64 -host_arch=x64 >nul && set'
+          cmd /c $command | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { Add-Content -Path $env:GITHUB_ENV -Value $_ }
+          }
+          if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+            Add-Content -Path $env:GITHUB_PATH -Value 'C:\ProgramData\chocolatey\bin'
+          }
+      - name: Install measurement dependencies and native probes
+        run: |
+          python -m pip install -r requirements.txt
+          python tools/build.py --probes-only
+      - name: Verify the same image through the native Windows DLL loader
+        run: python tools/verify.py
+      - name: Package tested development image, complete source and evidence
+        run: python tools/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SUB-BOX-ONYX-U1-Owner-Development
+          path: handoff/SUB-BOX-ONYX-U1-Owner-Development.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onyx-u1-windows-evidence
+          path: |
+            update/Patch-Identity.json
+            update/Scope-Proof.json
+            update/Verification-Summary.json
+            update/band-proof/Results.json
+            update/update-proof/Results.json
+            update/guard-proof-U1/Results.json
+            update/periodic-proof/Results.json
