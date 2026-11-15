@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+update/*.obj
+update/*.dll
+update/*.lib
+update/*.exp
+update/*.exe
+update/engine-probe
+update/guard-probe
+update/Candidate.vst3
+update/Patch-Identity.json
+update/Scope-Proof.json
+update/Verification-Summary.json
+update/*-proof*/
+qa/
+handoff/

@@ -1,0 +1,4 @@
+pefile==2024.8.26
+numpy>=2.0,<3
+scipy>=1.14,<2
+ziglang==0.17.1; sys_platform != "win32"
